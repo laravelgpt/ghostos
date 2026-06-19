@@ -1,354 +1,468 @@
-# GhostOS MVP Specification
+# GhostOS 1.0 — MVP Specification
 
-**One OS, Every App, Any Device.** GhostOS is a next-generation lightweight operating system with a modern AI-native desktop.  It unifies Windows, Linux, Android (and web) applications on low-end hardware, while providing a secure sandboxed environment. This document defines a complete production-ready MVP specification: goals, requirements, architecture, modules, packaging, security, testing, roadmap, team, and deliverables. All information is sourced from official documentation where applicable.
+**Version:** 1.0 (Prototype) **Date:** 2026-06-19
 
-## Overview
+## Executive Summary
 
-GhostOS is built on an initially Linux-based kernel (codenamed *ghost Kernel*) and includes:
+GhostOS is an **AI-native, lightweight operating system** designed for **modern UI**, **low-end hardware**, and **universal app support**. Its mission is to let users run **Windows, Linux, Android, and Web apps** seamlessly on one platform. GhostOS 1.0 will be based on the **Linux kernel** (a proven, open-source Unix-like kernel) to leverage mature hardware support and community. Core features include a modern desktop UI, built‑in AI assistant, and a universal package manager. GhostOS will boot from USB (live mode) or install to disk, supporting both legacy BIOS and UEFI with Secure Boot. Applications are sandboxed in containers (using Linux namespaces and cgroups) for security. 
 
-- **Compatibility Layers:** Run Windows apps via Wine/Proton, Android apps via Waydroid, Linux native apps, and (future) Mac apps via Darwin translation (Darling).
-- **Universal Package Management:** A custom `.ghostpkg` format and store that installs and updates applications across formats (.exe, .msi, .dmg, .deb, .rpm, .AppImage, .apk, PWAs, containers) from one repository.
-- **Modern Desktop Environment:** *Phantom Desktop* with a glassmorphic, 120Hz-animated UI built on Flutter or a similar cross-platform UI framework.
-- **AI Core:** Built-in local AI assistant (coding help, voice commands, system automation, etc.), using local LLMs.
-- **USB Boot & Live Modes:** Bootable USB (UEFI & BIOS, Secure Boot) supporting live session, persistence, and full installation.
-- **Security Sandbox:** Every app runs in an isolated sandbox (namespaces, seccomp, AppArmor/Cgroups, or container) with fine-grained permissions, and the OS supports atomic signed updates with rollback.
-- **Portable OS:** Optional full installation on USB for “carry-your-OS” portability.
+**Key Points:**  
+- **Kernel:** Linux (monolithic, open source)  
+- **Compatibility Layers:** Wine/Proton for Windows apps; Waydroid for Android apps; native support for Linux apps and PWAs; **no native macOS app support in v1** (planned later).  
+- **UI/UX:** Fluent, glassmorphic design; desktop and touch-friendly.  
+- **Security:** Application sandboxing (namespaces, seccomp, AppArmor/SELinux policies); signed updates.  
+- **Packaging:** New `.ghostpkg` format plus support for `.deb`/`.rpm`/AppImage; built-in *Ghost Store*.  
+- **AI:** Local LLM integration (e.g. open models) for assistant and coding tasks.  
+- **Boot/Installer:** ISO image with live/installer modes; uses SquashFS (read‑only root) with OverlayFS for persistence; can run entirely from USB (portable mode).  
 
-GhostOS’s goal is a robust cross-platform experience on minimal hardware (e.g. 2 GB RAM, dual-core CPU).  It prioritizes performance and battery life, with GPU-accelerated UI and minimal background overhead. 
+The MVP focuses on fundamentals and defers complex features (like full macOS app support) to future versions. This document outlines the **MVP scope**, **architecture**, **UI/UX guidelines**, **security model**, **AI features**, **packaging/installer flow**, **development tools/SDK**, **CI/CD plan**, **roadmap**, **team and budget estimates**, and **repo development plan** (issues, structure, CI workflows, etc.).  
 
-**Key sources:** WineHQ explains Windows compatibility on Linux; Waydroid docs describe running Android in a Linux container; Darling showcases efforts for macOS compatibility.  For security, Ubuntu docs note that UEFI Secure Boot ensures only signed boot binaries run.  GhostOS builds on these proven technologies.
+## MVP Scope
 
-## Goals & Objectives
+### Features (GhostOS 1.0)
 
-- **Universal Application Support:** Enable installing and running Windows, Linux, Android, and web apps from a single unified system. (e.g. `ghost install vscode`, `ghost install telegram`).
-- **Lightweight & High Performance:** Target minimal specs (2 GB RAM, 16 GB disk, dual-core CPU), fast boot (<5 s cold), and smooth 120 Hz UI animations.  
-- **Modern UI/UX:** Glassmorphism, responsive design for desktop/tablet, dark/light modes, multi-touch, and fast animations.  
-- **AI-Native:** Integrate an offline-capable AI assistant for code help, voice commands, system management, and smart search.  
-- **Secure by Design:** App sandboxing, least-privilege permissions, signed updates, encryption by default (disk and memory).  
-- **USB Portability:** Support live-USB sessions with persistence, and full “portable OS” installs on external drives.  
-- **Open Ecosystem:** Core OS is open-source (Linux kernel fork), with an open platform for third-party developers, SDK, and APIs.  
+| **Feature**                     | **Status** | **Notes**                                           |
+|---------------------------------|------------|-----------------------------------------------------|
+| Windows applications (`.exe`/`.msi`)   | ✅          | Via Wine/Proton compatibility layer |
+| Windows games (DirectX, Steam)  | ✅          | DirectX translation (DXVK/VKD3D), Steam (Proton) |
+| Linux applications (`.deb`, `.rpm`, AppImage, Flatpak, Snap) | ✅ | Native support; AppImages (uses SquashFS) |
+| Android apps (`.apk`, `.aab`)   | ✅          | Via Waydroid container                 |
+| Web Apps (Progressive Web Apps) | ✅          | Native support (Chromium Embedded / PWA)            |
+| Containers/Docker              | ✅          | Docker/LXC containers, systemd-nspawn                |
+| Ghost Native apps (`.ghostpkg`) | ✅          | New format (manifest + binaries + metadata)         |
+| CLI tools & scripts            | ✅          | Package via Ghost PKG or native repos               |
+| Built‑in AI Assistant         | ✅          | Local LLM (offline) for code, voice, system tasks    |
+| Live USB (trial mode)          | ✅          | Bootable USB with live system (SquashFS + overlay) |
+| Portable USB install           | ✅          | Entire OS installed on USB (persistent mode)        |
+| Full disk install (SSD/HDD)    | ✅          | Standard installer for local drive                  |
+| Secure Boot & UEFI/BIOS       | ✅          | GRUB supports both (with signed kernel/modules)     |
+| Sandboxed apps & permissions   | ✅          | Namespaces, seccomp, AppArmor/SELinux (optional) |
+| Automatic updates (signed)     | ✅          | Incremental OS updates; rollback on failure         |
+| Driver management (NVIDIA/AMD/WiFi) | ✅ | Automatic detection and install from repos          |
 
-## Non-Functional Requirements
+### Excluded (GhostOS 1.0)
 
-- **Performance Targets:** Cold boot in <5 s on SSD, <10 s on HDD (with UEFI Fast Boot). Typical app launch under 1 s. Idle memory footprint <300 MB (desktop only) on minimal config. UI should target 60–120 Hz refresh (GPU-accelerated via OpenGL/Vulkan).  
-- **Hardware Support:** 
-  - **CPU:** 64-bit x86 (Intel/AMD) with SSE2+, and optional support for ARM64 (future).  
-  - **GPU:** Support for integrated Intel/AMD and discrete GPUs via Mesa/Vulkan; DXVK to translate DirectX; basic NVIDIA support via open drivers (Nouveau).  
-  - **Storage:** MBR/GPT, BIOS/UEFI firmware (x86), Secure Boot (shim/GRUB with signed binaries).  
-  - **Peripherals:** Graphics, audio (ALSA/PipeWire), networking (Ethernet/Wi-Fi), USB, Bluetooth, etc. Automatic driver installation via built-in *Driver Hub*.  
-- **Resource Constraints:**  
-  - *Minimum Target:* Dual-core CPU, 2 GB RAM, 16 GB storage.  
-  - *Recommended:* Quad-core, 4 GB+ RAM, 64 GB SSD.  
-- **Security & Reliability:**  
-  - **Secure Boot:** Use a Microsoft-signed shim loader and signed GRUB/kernel (per Ubuntu Secure Boot model).  
-  - **Isolation:** Use Linux namespaces or containers for app sandboxes (like Flatpak/Snap).  
-  - **Updates:** Transactional (atomic) updates with snapshot/rollback (modeled on openSUSE transactional-update).  
-  - **Permissions:** POSIX ACLs, AppArmor profiles, and user-consent permission dialogs (like Android’s).  
-  - **Data Protection:** Full disk encryption (LUKS) optional; filesystem snapshots and system rollback.  
+- **Native macOS app support** (`.dmg`/`.app`): *Not included in v1*. macOS binaries rely on Apple frameworks (Cocoa, Metal, etc.) absent on Linux; macOS compatibility is **planned for v2.0+** with a new “MacBridge” layer.  
+- **Custom kernel**: Initially using mainline Linux; custom kernel components planned for v3.0.  
+- **Enterprise fleet features**: (Central management console, etc.) to come in later versions.  
+- **Mobile OS (phone) version**: Focus is desktop x86/x64; ARM64 support for e.g. Raspberry Pi is future work.  
 
-## Supported Application Formats
+### Sample Feature Comparison
 
-GhostOS will support these formats:
+```markdown
+Feature              | GhostOS 1.0 (MVP) | GhostOS 2.0+ / Future
+-------------------- | ----------------- | -------------------
+Windows apps (.exe)  | ✅ via Wine/Proton | ✅ improved compatibility
+macOS apps (.dmg/.app) | ❌ (unsupported) | 🔜 MacBridge (v2)
+Android apps (.apk)  | ✅ via Waydroid     | ✅ (improved)
+Linux apps (.deb/.rpm/AppImage) | ✅ | ✅
+Web apps (PWA)       | ✅                 | ✅
+AI Assistant         | ✅ (local LLM)      | ✅ (online+agents)
+Live USB             | ✅ (SquashFS+Overlay) | ✅
+Secure Boot          | ✅ (UEFI support)   | ✅
+Custom Kernel        | ❌ (Linux base)     | 🔜 (ghost Kernel in v3)
+```
 
-- **Windows:** `.exe` and `.msi` installers via **WinBridge** (Wine/Proton compatibility layer).  
-- **macOS:** `.app` bundles and `.dmg` disks via **MacBridge** (Darling translation layer) – initially limited to simple tools (full Cocoa/Metal apps are long-term goals).  
-- **Linux:** Native Linux packages (`.deb`, `.rpm`), self-contained `.AppImage`, Flatpak, and Snap (via container runtime).  
-- **Android:** `.apk` / `.aab` via **AndroidBridge** (Waydroid/Android Runtime).  
-- **Web:** Progressive Web Apps (PWAs) via Chromium-based browser integration.  
-- **Containers:** Docker/OCI images via a built-in container engine (e.g. Podman or containerd).  
+## Technical Architecture
 
-Supported sources include official vendor sites, GitHub releases, and GhostOS Store repositories.  The Ghost Store UI and CLI (`ghost install <app>`) will automatically fetch and install the optimal format (preferring native packages, otherwise container or compatibility).
+### Kernel and Core OS
 
-## macOS Compatibility Plan
+GhostOS 1.0 will use the **Linux kernel** as its base. The Linux kernel is a *free, open-source Unix-like kernel*, widely used in PCs, servers, and embedded devices. It supports thousands of hardware devices and architectures out of the box, making it ideal for a lightweight OS on diverse hardware. The initial distribution can be derived from a minimal Linux system (e.g. Alpine, Debian netboot, or a custom build). Key kernel features:
 
-**Current limitations:** Native macOS binaries rely on Cocoa, CoreFoundation, Metal, etc., which are absent on Linux. Darling (macOS translation layer) is still experimental and primarily supports CLI and very simple GUI apps.  As such, GhostOS 1.x will **not** guarantee full `.app` compatibility. The installer can *extract* `.dmg` archives but not automatically install Mac apps.
+- **Monolithic design:** The entire OS kernel runs in privileged mode, ensuring performance (modern Linux is efficient and modular).  
+- **Driver support:** Hundreds of built-in drivers (NVIDIA/AMD GPU, Intel, Wi-Fi, Bluetooth, etc.).  
+- **Process scheduler & memory management:** Mature and optimized for desktop responsiveness and low-power devices.  
+- **Security Modules:** SELinux/AppArmor enabled for hardening.  
+- **Namespaces & cgroups:** Foundational primitives for container isolation (used for app sandboxing).  
 
-**Plan:**  
-1. **MVP (GhostOS 1.0):** No native Mac app support; treat `.dmg/.pkg` as just archives. Focus on Windows, Linux, Android.  
-2. **GhostOS 2.0:** Introduce **MacBridge** with basic support: allow launching lightweight CLI tools and possibly a subset of GUI apps via Darling (leveraging the Linux kernel fork’s translation of Mach/Darwin calls). Likely restricted to open-source/light apps (e.g. Mac homebrew utilities).  
-3. **GhostOS 3.0+:** Improve MacBridge to support popular apps. Possibly containerize macOS (Hackintosh-style VM with Hypervisor.framework translation) or advanced translation. Target apps: VS Code (mac build), Sublime, Figma, Notion, etc. 
+We will initially use an unmodified upstream kernel. Future versions may incorporate custom patches (e.g. *ghost kernel components* in GhostOS v3.0).
 
-Throughout, GhostOS will automatically prefer non-Mac alternatives from its store (e.g. install Linux or Windows builds if available) to minimize reliance on MacBridge.
+### Compatibility Layers
 
-## USB Bootable, Live, and Portable Modes
+GhostOS provides multiple “bridge” layers to run apps from other ecosystems:
 
-GhostOS must boot from USB in multiple modes:
+- **WinBridge (Windows apps):** Uses [**Wine**](https://www.winehq.org) and Valve’s **Proton** to run Windows executables. Wine is a compatibility layer that translates Windows system calls to POSIX calls; Proton bundles Wine plus additional fixes for gaming. *Example:* Visual Studio Code on GhostOS can run using its Windows installer through Wine. According to WineHQ, *“Wine is a compatibility layer capable of running Windows applications on several POSIX-compliant operating systems”*.  
+- **LinuxBridge (Linux apps):** Native support. Debian/Red Hat packages and AppImages run directly. GhostOS can run any Linux application that the kernel and libraries support. AppImage (portable Linux app format) itself uses SquashFS to package apps. We may also support Flatpak/Snap sandboxing.  
+- **DroidBridge (Android apps):** Uses [**Waydroid**](https://waydro.id), a Linux container for Android. Waydroid “runs a full Android system in a container” using Linux namespaces. It provides near-native performance and integrates Android windows into the desktop. GhostOS will include an Android runtime (e.g. AOSP 13 base) with Waydroid so users can install APKs.  
+- **MacBridge (macOS apps):** *Not in v1.* Native macOS binaries rely on Cocoa, Metal, etc., which Linux lacks. A compatibility layer (like Darling or a new MacBridge) is extremely complex. We will postpone macOS support to GhostOS 2.0+. For now, users can install Linux or Windows versions of cross-platform apps instead.  
+- **WebBridge (Web apps):** Progressive Web Apps (PWAs) run in a browser or dedicated container (like Electron/Chromium integration).
 
-- **UEFI & BIOS:** Support both firmware types, with Secure Boot (shim+GRUB signed). Use GPT partitioning (fallback to MBR for BIOS).  
-- **Live USB Mode:** A read-only compressed SquashFS root with an overlayFS rw layer in RAM or USB. On boot, offer “Try GhostOS” (RAM-mode live) and “Install GhostOS”. Enable *persistent storage* partition for user data (like Debian/Ubuntu live USBs).  
-- **Portable USB Mode:** The user can install GhostOS *onto* a USB drive, making it a fully persistent OS. All apps, settings, and data reside on the USB. The USB should be optimized (e.g. using ext4 or GhostFS) and possibly include an EFI bootloader for portability.  
-- **Full Installation:** Optionally install GhostOS to internal SSD/HDD/NVMe or external SSD (with proper bootloader setup). Support dual-boot alongside Windows/Mac.  
-- **PXE/Network Boot (Optional):** Support netboot environments for enterprise deployment.
+Each bridge is implemented as an *abstracted runtime layer*. For example, installing a Windows app will invoke Wine/proton behind the scenes, while installing an Android app uses Waydroid.
 
-**Bootloader:** Use GRUB or systemd-boot as the primary bootloader. Secure Boot will be managed via a signed shim that loads the GhostOS kernel. The installer pipeline (e.g. using Debian live-build or SUSE KIWI) will generate an ISO with embedded bootloader, kernel, initramfs, etc.
+### Boot & Storage
 
+GhostOS supports multiple boot and storage modes:
+
+- **Ghost Bootloader:** Uses GRUB2 (or systemd-boot) to handle both BIOS and UEFI. On UEFI, we include signed bootloader (shim) to support Secure Boot.  
+- **Boot Flow:** BIOS/UEFI → **Ghost Bootloader** (GRUB) → **Ghost Kernel** + initramfs → **Ghost Desktop Environment**.  
+
+- **Live USB Mode:** GhostOS can run directly from USB without installing. The USB will contain a **SquashFS**-based root image (read-only) and an optional overlay or persistence file. SquashFS is a compressed, read-only filesystem for Linux; it is commonly used for live CDs. We mount SquashFS as the root layer and overlay it with a writable filesystem (OverlayFS) for changes. As Wikipedia notes, *“Squashfs is often combined with a union mount filesystem, such as OverlayFS, to provide a read-write environment for live Linux distributions”*. This gives fast, compressed base system with persistent updates on top.  
+- **Persistent USB / Portable Mode:** GhostOS can be **installed entirely on a USB drive**. All OS files, user data, and installed apps reside on the USB (with overlayfs or a second partition). Users can plug this USB into any PC and get their personal GhostOS environment.  
+- **Full Disk Install:** Traditional installer (similar to Ubuntu/Arch installers) writes GhostOS to an internal drive. Installer supports automatic partitioning, dual-boot, LUKS encryption, etc.  
+
+- **File System:** By default, GhostOS uses ext4 (or Btrfs) on installed disks for reliability. The live environment uses SquashFS + OverlayFS. We may call our layered filesystem **GhostFS** internally. Snapshots and rollback (via OverlayFS or Btrfs snapshots) are supported for system updates.  
+
+### Package Management
+
+GhostOS introduces a **universal package manager**. Key elements:
+
+- **Ghost Packages (`.ghostpkg`):** A new format for native apps. Each `.ghostpkg` is a compressed archive containing a `manifest.json`, binaries, assets, and a `permissions.json`. It is versioned and signed. The manifest describes dependencies, entry points, and metadata.  
+- **Ghost Store:** A central repository of Ghost apps. Users can `ghost install <app>` to fetch from the store (or external sources like GitHub Releases). The store aggregates Windows ports (via Wine recipes), Linux binaries, Android APKs, and web apps, choosing the best one for the platform.  
+- **Existing formats:** We will repurpose existing package systems: GhostOS will natively support `.deb`, `.rpm`, Flatpaks, Snaps, and AppImages. The `ghost` CLI can wrap these (e.g. `ghost install vscode` could install the Debian VSCode package).  
+- **Container Packages:** Docker images and OCI containers can be run via an integrated container engine (podman/docker).  
+- **Auto-update:** The package manager handles updates. All packages and system updates are cryptographically signed.
+
+## UI/UX Design
+
+GhostOS will have a **modern, intuitive interface**. Main elements:
+
+- **Design Style:** A mix of **Glassmorphism** (frosted-glass transparency), Material 3, and Fluent design. Use dynamic blur, smooth animations (up to 120Hz), and adaptive layouts. Follow Google’s Material Design 3 guidelines (color theming, motion, responsive UI) and Microsoft Fluent guidelines for consistency. Both dark and light themes will be available; accent colour (Ghost Cyan™) used for highlights.  
+- **Shell/UI:**  
+  - **Top Panel:** Global search box, AI assistant widget, notifications tray, quick settings (network, volume, battery), user profile menu.  
+  - **Dock (Launcher):** Favorite apps, recent files, system icons (File Manager, Browser, Terminal, Store). Option to auto-hide.  
+  - **Virtual Workspaces:** Multiple desktops with swipe gestures and thumbnail overview.  
+  - **Widgets/Activities:** Dashboard for weather, calendar, system stats, AI notes.  
+  - **Gestures:** Multi-touch support, edge swipes to open overview or notifications.  
+- **Consistency:** All system dialogs and apps use a coherent theme. Native apps (GhostUI) use unified widgets.  
+- **Example (Mermaid conceptual):**
+
+  ```mermaid
+  graph LR
+    A[Top Panel] --> B[Search]
+    A --> C[AI Assistant]
+    A --> D[Notifications]
+    A --> E[Quick Settings]
+    A --> F[User Menu]
+    subgraph Main UI
+      B & C & D & E & F
+    end
+    G[Dock] --> |Launch Apps| H[Applications]
+    G --> I[Files]
+    G --> J[Browser]
+    G --> K[Terminal]
+    G --> L[Store]
+  ```
+
+## Security Model
+
+Security is paramount. GhostOS follows best practices:
+
+- **Sandboxing:** Each application runs in an isolated container created via Linux namespaces and cgroups. By default, apps cannot see each other or critical system resources. The desktop enforces per-app containers (similar to Android or Flatpak).  
+- **Permissions:** A permission manager lets users control app access (files, camera, microphone, location, network, etc.). When an app is installed, it declares needed permissions in its `manifest.json`. At runtime, GhostOS prompts the user to allow/deny (like mobile OS). Permissions are stored and can be toggled later.  
+- **Mandatory Access Control:** We ship with a MAC policy (AppArmor by default, SELinux optional) to confine system services and desktops further. Policies limit access to `/sys`, `/proc`, and sensitive kernel interfaces.  
+- **Secure Boot & Updates:** The bootloader and kernel are signed to support UEFI Secure Boot. All system updates (kernel, drivers, packages) are signed and verified. The update system is atomic (using rsync or OSTree-like strategy) so a failed update automatically rolls back to the previous snapshot.  
+- **Network Security:** Host firewall (nftables/iptables) is enabled by default. GhostOS can run code in sandboxed network namespaces for untrusted applications.  
+- **User Separation:** GhostOS uses a standard Linux user model. Multiple users can log in; data is separated. The `ghost` CLI runs with sudo for system tasks.
+
+## AI Integration
+
+GhostOS is **AI-native**. Every copy includes a local AI stack:
+
+- **Local LLMs:** Support for on-device large language models (e.g. LLaMA, Mistral, Dolly 2.0). Users can install a local model (LLM), which runs with hardware acceleration if available. Offline inference is possible for privacy and availability. (For example, Databricks’ Dolly 2.0 is an open-source LLM designed for on-premise use.)  
+- **Ghost AI Assistant:** A system assistant “Ghost” is integrated into the shell. It can execute commands (“ghost open settings”, “ghost install vscode”), answer queries, summarise files, and perform automation tasks. The assistant works offline by default (using local model and knowledge base), with optional cloud support.  
+- **Voice Interface:** Ghost can also be invoked via voice (wake word “Hey Ghost”). Speech-to-text and text-to-speech run locally.  
+- **Coding Assistant:** Integrated into the desktop editor or terminal: “ghost ai write a bash script to parse logs”. Uses the LLM.  
+- **Agent System (Future):** v1.0 will have a simple CLI AI assistant. Later versions will support multi-agent workflows (scheduling tasks, chaining actions).
+
+## Packaging, Installer, and USB
+
+### ISO & Live USB
+
+- **GhostOS ISO:** We produce a bootable ISO image (1–2 GB). It contains a SquashFS root and GRUB EFI images.  
+- **Live Mode:** Booting the ISO (via GRUB or Ventoy) drops the user into a live GhostOS session. System runs from memory, root is SquashFS, and the home and overlay are in RAM or on USB persistence.  
+- **Persistence:** To save changes in live mode, GhostOS sets up an OverlayFS that writes to a “ghostos-data” partition or file. By default, GhostOS creates a small persistent overlay on USB so user settings and installed apps survive reboot. (This works like Ubuntu’s “casper-rw” persistence, but without manual flags.)  
+- **Ventoy Support:** The ISO is Ventoy-compatible. Ventoy (open-source USB toolkit) allows simply copying the ISO to a Ventoy USB stick. Users can then boot GhostOS by selecting it from Ventoy’s menu. Ventoy supports persistence plugins if needed.  
+- **USB Installer:** Booting the live mode, the user sees an “Install GhostOS” icon. The installer (built on **Calamares** or similar) guides through:
+  1. Language/keyboard selection  
+  2. Disk selection (target partition/USB) with optional auto-partition  
+  3. User account setup  
+  4. Installation progress.  
+
+  The installer will configure UEFI/BIOS boot entries and install the GRUB bootloader. It supports encrypted LVM and filesystem encryption.
+
+### Persistent USB Mode
+
+GhostOS offers a **“portable” USB install** option. When installing to USB, you can enable a mode where all user data (home directory, config, Ghost Store, AI models) reside on the USB itself. On any PC, plugging in the USB and selecting it as boot device yields your personal desktop with all your apps and files.  
+
+**Example usage:**  
 ```bash
-# Example: make a bootable GhostOS USB (conceptual)
-# Assumes ghostos.iso downloaded
-sudo dd if=ghostos.iso of=/dev/sdX bs=4M status=progress
+ghostos# usb-format /dev/sdb1
+ghostos# ghostos-install --target /dev/sdb1 --portable
 ```
+This creates a bootable USB. To boot GhostOS from USB on a new PC, one can also use Ventoy or write it with a tool like `dd` or Rufus.
 
-*Sources:* The Ubuntu Secure Boot docs explain using a shim and signed kernels to boot. The Kali documentation details making live USBs with persistence via overlay partitions, which GhostOS can emulate.
+### Ghost Package Format
 
-## Architecture Overview
-
-```mermaid
-flowchart TB
-  subgraph GhostOS System
-    A[Ghost Bootloader (UEFI/BIOS)]
-    B[ghost Kernel (Linux-based)]
-    C[Ghost Desktop (UI/Window Manager)]
-    D[Compatibility Layer Engine]
-    E[Ghost Store & Package Manager]
-    F[Ghost AI Assistant/Core]
-    G[Security Sandbox & Firewall]
-    H[GhostFS / Storage]
-    I[Driver Hub]
-    A --> B
-    B --> C
-    B --> D
-    B --> E
-    B --> F
-    B --> G
-    B --> I
-    C --> E
-    D --> J[WinBridge (Wine/Proton)]
-    D --> K[MacBridge (Darling)]
-    D --> L[AndroidBridge (Waydroid)]
-    D --> M[LinuxBridge (Native)]
-    J --> JApp[.exe/.msi Apps]
-    K --> KApp[.app/.dmg Apps]
-    L --> LApp[.apk/.aab Apps]
-    M --> MApp[.deb/.rpm/.AppImage Apps]
-    F --> AIModel[(Local LLM, NPU)]
-    H --> Snapshots[(Snapshots, Compression, Encryption)]
-    E --> Repo[Ghost Repo (OSS & Enterprise)]
-  end
+The `.ghostpkg` is a simple ZIP/tar format:
 ```
+app.ghostpkg/
+├── manifest.json      # app metadata (name, version, exec path, dependencies)
+├── binaries/          # executable files for supported archs
+├── assets/            # icons, UI files
+└── permissions.json   # declared permissions (network, files, etc.)
+```
+All fields in manifest are documented in `/docs/ghostpkg-spec.md`.
 
-**Components:**
+## Developer Tools & SDK
 
-- **ghost Kernel:** A Linux kernel fork with possible custom scheduler and security modules. Handles hardware, drivers, process scheduling, and system calls.
-- **Ghost Bootloader:** GRUB-based (UEFI/BIOS) with secure boot (shim). Loads kernel/initramfs.
-- **Compatibility Layer:** A service that launches foreign apps in translation:
-  - *WinBridge (Wine/Proton)* – translates Windows API to POSIX.  
-  - *MacBridge (Darling)* – provides a Darwin/macOS environment.  
-  - *AndroidBridge (Waydroid)* – runs Android in a container using Linux namespaces.  
-  - *LinuxBridge* – native execution for Linux binaries.
-- **Ghost Desktop Environment:** UI shell (Phantom Desktop) with top panel (search, AI, status), dock, workspaces, notifications, and a widget system.
-- **Ghost Store & Package Manager:** CLI (`ghost`) and GUI store for installing/updating apps. Manages .ghostpkg and pulls from multi-format repo.
-- **Ghost AI Core:** Local AI/LLM for assistant tasks (could use open-source models).
-- **Security Sandbox:** Container or namespace-based sandbox for each app (akin to Flatpak). Controls permissions (file access, network, devices).
-- **GhostFS:** A Union/Btrfs-based filesystem with compression, encryption, and snapshot support.
-- **Driver Hub:** Auto-detects hardware and fetches proprietary drivers if needed (e.g. GPU drivers).
-- **Update System:** Ensures atomic system updates. Likely uses snapshots (e.g. Btrfs) and a transactional update mechanism.
-
-## Module Breakdown
-
-### Kernel & Core System
-
-- **Linux Kernel (ghost):** Initial base from a recent stable Linux. Customization includes integrating Rust components, real-time scheduling (if needed), and added sandbox hooks (seccomp filtering).  
-- **Init & Services:** Use `systemd` or `s6` for init. Handles service startup and user sessions.
-
-### Compatibility Engine
-
-- **WinBridge:** Incorporates Wine (or Proton from Valve) to launch Windows `.exe` apps. Example: `wine /path/to/app.exe` under the hood. Steam (Proton) integration for games.  
-- **AndroidBridge:** Uses Waydroid (an Android container) to run APKs with near-native performance.  
-- **MacBridge:** Uses Darling to provide a Darwin environment on Linux. Initially CLI-only, with future GUI support.  
-- **LinuxBridge:** Native support (no translation) for ELF binaries (`.deb`, `.rpm`, `.AppImage`).  
-
-### Desktop Environment
-
-- **UI Framework:** Likely Flutter (Google’s UI toolkit) or Qt for GPU-accelerated interfaces.  
-- **Features:** Virtual desktops, smart dock, global search (indexed files/apps), notification centre, system settings.  
-- **Theme Engine:** Light/Dark modes, customizable accent colors (e.g. “Ghost Cyan”), animation manager (120 Hz).
-
-### Ghost Store & Package Manager
-
-- **Ghost CLI:** `ghost install <app>`, `ghost remove`, `ghost update`, `ghost snapshot`, etc.  
-- **Repo:** A unified repo containing `.ghostpkg` metadata that links to Windows EXEs, Linux packages, Android APKs, or container images.  
-- **Installer Integration:** GUI Store for browsing apps (with screenshots, ratings). Enterprise repo support.
-
-**Package Formats:** `.ghostpkg` (custom archive containing binaries for each platform, manifests, scripts, and cryptographic signature).   Example manifest (`manifest.json`):
-
-```json
-{
-  "name": "example-app",
-  "version": "1.2.3",
-  "maintainer": "Vendor Name",
-  "description": "A cross-platform example application.",
-  "platforms": {
-    "windows": { "path": "bin/windows/example.exe", "sha256": "abc123..." },
-    "mac":     { "path": "bin/macos/example.app.tar.gz", "sha256": "def456..." },
-    "linux":   { "path": "bin/linux/example.AppImage", "sha256": "789abc..." },
-    "android": { "path": "bin/android/example.apk", "sha256": "012def..." }
-  },
-  "dependencies": [
-    { "name": "libfoo", "version": ">=1.0" }
-  ],
-  "postinstall": "scripts/postinstall.sh",
-  "permissions": {
-    "network": true,
-    "camera": false,
-    "files": ["~/Documents/example"]
+- **Languages:** Core OS components in **Rust** (safety), drivers in C/C++. Desktop UI with **Flutter** (for cross-platform GPU-accelerated UI) or a lightweight toolkit. Ghost apps can be written in Rust, C/C++, Dart (Flutter), or web technologies (HTML/JS with Chromium engine).  
+- **GhostSDK/GhostUI:** A lightweight Rust/C++ UI framework for creating native apps with declarative APIs. Example (Rust pseudocode):
+  ```rust
+  use ghostui::prelude::*;
+  
+  fn main() {
+      let mut win = GhostWindow::new("Sample Ghost App")
+          .size(400, 300)
+          .build();
+      win.show();
+      Ghost::run();
   }
-}
-```
+  ```
+- **Ghost Studio:** Planned IDE with templates for Ghost app development. Includes WYSIWYG layout editor, GhostFS browser, and a live QEMU emulator.  
+- **Package Builder:** CLI tool to assemble `.ghostpkg` from source.  
+- **Version Control:** Git repositories for source. GhostOS code (bootloader configs, kernel patches, userland scripts) is open-source on GitHub.
 
-The `ghostpkg` bundle (`example-app.ghostpkg`) includes the above manifest, all binaries, optional assets, scripts, and a `signature.sig` file. The Ghost Package Manager reads this to install apps and enforce permissions.
+## CI/CD and Testing
 
-### GhostFS (File System)
+- **Repository Hosting:** All code and docs on GitHub (`laravelgpt/ghostos`).  
+- **CI Pipelines (GitHub Actions):**  
+  - **Build ISO:** A workflow on pushes to `main` builds the GhostOS ISO. It checks out code, installs toolchain (gcc, make, etc.), then runs `make iso`. The resulting `ghostos.iso` is uploaded as a build artifact.  
+  - **Unit Tests:** Separate jobs run unit tests for Rust components (`cargo test`) and Python/JS tests as needed.  
+  - **OS Smoke Tests:** (Optional) Use QEMU on CI to boot the ISO image and run basic startup tests (e.g. ensure kernel boots, login screen appears). This can use `apkovlc/vm-rs` or similar.  
+  - **Container Build:** A job to build and publish Docker container images (for Waydroid, Proton SDK, etc.).  
+  - **Linting:** Static analysis for Rust (Clippy), C/C++ (cppcheck), YAML lint, etc.  
+- **Release Process:** Tagged releases trigger signed ISO builds. Builds are reproducible and archive in GitHub Releases.
 
-- **Snapshotting:** Based on Btrfs or ZFS (userland) to enable fast snapshots and rollbacks (like openSUSE’s approach).  
-- **Overlay Support:** Live-USB persistence uses overlayFS on top of read-only SquashFS.  
-- **Encryption:** On-disk encryption (LUKS or native FS encryption) for privacy.  
-- **Compression:** Transparent compression to save space.  
-- **Fast Search:** Indexing (like `tracker` or `recoll`) for global search of files.
+## Roadmap and Timeline
 
-### Sandboxing & Security
-
-- **Sandboxing:** Use Linux namespaces (unshare, bubblewrap) to isolate each app’s process. Similar to Flatpak’s sandbox model or Chrome’s site isolation.  
-- **Permissions:** Implement a permission system (inspired by Android/Flatpak portals) so apps must request access to camera, microphone, files, etc. E.g. a Telegram app shows “X permissions granted/denied” before install/run.  
-- **Signed Binaries:** All system packages, kernel modules, and updates are signed. Secure Boot ensures only signed kernel. App packages are signed by vendors or GhostOS keys.  
-- **Firewall:** Built-in firewall (nftables/iptables) per-container if needed.  
-- **Least Privilege:** By default, apps have minimal rights; escalate only with user consent.
-
-### Update System
-
-- **Atomic Updates:** Using a mechanism like openSUSE's transactional-update. Create a snapshot of the system tree, apply updates (e.g. package installs) in it, then commit or rollback.  
-- **Delta/Compressed Packages:** To save bandwidth, use binary deltas or zsync for ISO updates.  
-- **Rollback:** On boot failure or user request, roll back to previous snapshot.  
-- **Channels:** Support stable and rolling releases; users can opt into an enterprise channel for critical updates.
-
-## Installer and ISO Build Pipeline
-
-- **ISO Build:** Use Debian Live-Build or SUSE KIWI to generate a GhostOS ISO with all components. The ISO contains a GRUB EFI image, Linux kernel, initramfs, and live system.  
-- **Live USB Creation:** Recommend tools like Ventoy or balenaEtcher to copy the ISO to USB. The ISO will support persistent overlay.  
-- **Installer:** The live session includes an installer (e.g. Calamares or a custom one) with steps: language, keyboard, disk partition (with auto-partition option), user account, encryption, and install. The installer will set up GRUB boot on target.  
-- **Continuous Integration:** The build pipeline is automated (CI/CD) using tools like Packer, Jenkins/GitHub Actions to produce nightly/weekly builds. Each build runs automated tests (see Testing Plan).  
-- **Driver Repository:** The Installer fetches drivers (e.g. NVIDIA/AMD) via a curated repo if needed after first boot.
-
-## Testing Plan
-
-A robust testing strategy is crucial:
-
-- **Hardware Matrix:** Test on representative hardware sets:
-  - **CPUs:** Intel/AMD x86-64 (SSE2+), optionally ARM64.  
-  - **GPUs:** Intel iGPUs, AMD Radeon, NVIDIA (Proprietary & Nouveau).  
-  - **Peripherals:** Wi-Fi chipsets, Bluetooth, audio codecs, printers, webcams.  
-  - **Devices:** Laptops, desktops, tablets (touchscreens).  
-- **Installation Tests:** Use openQA (openSUSE’s test framework) to automate full installation testing. It can boot ISO in QEMU with various options and verify UI output.  
-- **App Compatibility Tests:** Create test scripts that install and run popular apps:
-  - **Windows apps:** e.g. Notepad++, 7-Zip via Wine.  
-  - **Linux apps:** e.g. `apt install firefox`, running native software.  
-  - **Android apps:** e.g. installing an Android game in Waydroid.  
-- **Stress & Performance:** Benchmark with glxgears, video decode, and measure idle/running power.  
-- **Security Tests:** Run SELinux/AppArmor policies through audit, attempt sandbox escapes.  
-- **Continuous Integration:** 
-  - **Unit Tests:** For Ghost tools (pkg manager, store, sandbox) using mocked environments.  
-  - **Integration Tests:** Each commit triggers building an ISO and running smoke tests in QEMU.  
-  - **Fuzzing:** Use tools like AFL/QEMU to fuzz system calls and compatibility layers.  
-
-_Citation:_ “openQA is an automated test tool that makes it possible to test the whole installation process… It uses virtual machines to reproduce the process, check the output at every step, and send necessary keystrokes.” GhostOS will adopt openQA to validate ISO boots, installers, and basic functionality on each build.
-
-## Roadmap & Milestones
+A phased development plan over 18–24 months:
 
 ```mermaid
 gantt
-    title GhostOS 12-Month MVP Roadmap
-    dateFormat  YYYY-MM-DD
-    section Phase 0 – Research & Planning
-    Architecture Design       :done, 2026-06-01, 45d
-    Tech Selection & Prototyping :2026-07-15, 45d
-    section Phase 1 – Core OS
-    Kernel Fork & Base System :2026-08-01, 90d
-    Bootloader & Live USB      :2026-11-01, 45d
-    section Phase 2 – Desktop & Tools
-    Desktop Environment (Phantom) :2027-01-01, 60d
-    Ghost Package Manager & Store  :2027-03-01, 45d
-    Native Linux App Support     :2027-04-15, 30d
-    section Phase 3 – Compatibility
-    WinBridge (Wine/Proton)      :2027-05-15, 60d
-    AndroidBridge (Waydroid)     :2027-07-15, 60d
-    Basic MacBridge (Darling CLI) :2027-09-15, 60d
-    section Phase 4 – AI & Cloud
-    Ghost AI Integration         :2027-11-15, 60d
-    Cloud Sync & Backup          :2028-01-15, 45d
-    section Phase 5 – Polishing & MVP
-    Testing & QA                 :2028-03-01, 60d
-    Documentation & SDK         :2028-05-01, 45d
-    Release Preparation          :2028-06-15, 30d
+    title GhostOS 1.0–1.5 Roadmap
+    dateFormat  YYYY-MM
+    section Research & Planning
+    Specs & Tech Survey      :done,    res, 2026-03, 2026-04
+    Prototyping Desktop UI   :done,    res2,2026-04, 2026-05
+    section Core Development (v1.0)
+    Kernel + Drivers        :active,  core,2026-05, 4m
+    Basic Desktop Shell      :         core2,2026-05, 4m
+    Ghost Package Manager    :         core3,2026-06, 3m
+    Installers (USB/ISO)     :         core4,2026-07, 3m
+    AI Assistant (v1)        :         ai1,  2026-08, 3m
+    Testing & Integration    :         test,2026-09, 3m
+    release                  :milestone, res1, 2026-12, 0m
+    section Post-MVP (v1.1+)
+    WinBridge (Proton)       :         winb,2027-01, 3m
+    DroidBridge Improvements :         droid,2027-02, 2m
+    UI Polishing & Themes    :         ui2,   2027-03, 2m
+    Documentation (Full)     :         docs, 2027-04, 1m
+    Public Beta Testing      :         beta, 2027-05, 2m
 ```
 
-- **Phase 0 (3–6 months):** Research, define architecture, build prototypes of Win/Android bridges.  
-- **Phase 1 (6–9 months):** Linux-base OS core, bootloader, installer, USB live.  
-- **Phase 2 (9–12 months):** Desktop UI (Flutter), package manager & store, native Linux app ecosystem.  
-- **Phase 3 (12–18 months):** Compatibility layers: Windows (Wine/Proton), Android (Waydroid), initial Mac support, container isolation.  
-- **Phase 4 (18–24 months):** Integrate AI assistant, cloud sync services, enterprise features.  
-- **Phase 5 (24+ months):** Long-term: custom kernel components, advanced Mac support, enterprise tooling.
+**Milestones:**  
+- **MVP Release (v1.0):** Core OS + Live USB + Windows/Linux/Android app support + AI assistant (target: Q4 2026).  
+- **v1.1:** Add containerised app store, fix bugs, improve performance.  
+- **v2.0:** Introduce Mac compatibility layer (MacBridge), cloud sync, enterprise features.  
+- **v3.0:** Custom kernel components, full GhostFS, native Ghost apps.
 
-Milestones:
-- **MVP Release (~18 months):** GhostOS-1.0 stable ISO with USB boot, core desktop, store, Windows/Android app support, AI assistant.
-- **GhostOS 2.0 (~24 months):** Improved compatibility (faster Wine, add APK performance, initial Mac GUI), GhostSDK, enterprise deployment suite.
-- **GhostOS 3.0:** Independent kernel modules, full cross-compatibility, GhostFS snapshots, global unification.
+## Team Roles & Hiring (Example)
 
-## Team & Roles
+| Role                     | Responsibilities                             | Quantity (Year 1) |
+|--------------------------|----------------------------------------------|-------------------|
+| **Project Lead**         | Overall architecture, coordination          | 1                 |
+| **Linux Systems Engineer** | Kernel, drivers, bootloader               | 1–2               |
+| **Rust Developers**      | Core OS, Ghost package manager, GhostFS      | 2                 |
+| **Frontend/UI Engineers**| Desktop shell (Flutter/Web), UX design       | 2                 |
+| **Android/Container Engineer** | Waydroid integration, container system| 1                 |
+| **AI/ML Engineer**       | LLM integration, assistant functionality     | 1                 |
+| **QA/Test Engineer**     | Automated testing, CI/CD                     | 1                 |
+| **DevOps Engineer**      | CI/CD pipelines, infra, release automation   | 1                 |
+| **UX/UI Designer**       | Mockups, design system, user flows           | 1                 |
+| **Documentation**        | Guides, API docs, website                    | 1                 |
 
-A lean cross-functional team is needed:
+Larger teams (10–15) may be needed if schedules accelerate. Subsequent years (2/3) would scale up for features like Cloud, Enterprise, etc.
 
-- **Year 1 (MVP):** 
-  - 2–3 Linux Kernel developers (C/C++/Rust) – integrate drivers, secure boot, sandboxing.  
-  - 1 Firmware/Boot engineer – configure UEFI/GRUB, shim, signed images.  
-  - 2 Systems engineers – Docker/Waydroid integration, update system (transactional).  
-  - 2 UI/UX engineers – Flutter or Qt desktop, design system.  
-  - 1 Backend engineer – Ghost Store service, package repo, CI infrastructure.  
-  - 1 QA engineer – testing automation (openQA).  
-  - 1 Technical writer – docs/specs.  
+## Budget Estimate (Example)
 
-- **Year 2+:** Expand with more devs for compatibility layers (Wine/Darling contributions), drivers, AI/LLM integration, and enterprise features.
+| Category          | Year 1 (2026)   | Year 2 (2027)   | Year 3 (2028)   |
+|-------------------|-----------------|-----------------|-----------------|
+| **Salaries**      | $300,000        | $600,000        | $1,000,000      |
+| **Infrastructure**| $50,000         | $75,000         | $100,000        |
+| **Hardware**      | $20,000         | $30,000         | $30,000         |
+| **Marketing/PR**  | $30,000         | $50,000         | $50,000         |
+| **Misc (Legal, etc.)** | $20,000    | $25,000         | $30,000         |
+| **Total**         | ~$420,000       | ~$780,000       | ~$1,210,000     |
 
-**Roles:** Kernel & drivers, system (containers, networks), security, application dev (package manager), UI/UX design, QA/test automation, DevOps.
+*Estimates assume a ~10-person team. Open-source contributions and partnerships can offset costs.*
 
-## Budget & Resources
+## Project Management (GitHub)
 
-- **Open-Source Foundation:** Core dependencies (Linux kernel, Wine, Waydroid) are free.  
-- **Infrastructure:** Cloud build servers, test hardware lab (target $10–20K initial).  
-- **Personnel:** Assuming contractor rates, initial 1-year dev team ~$300K–$500K. (Exact budget unspecified – depends on salaries, region, and community involvement.)  
-- **Licensing:** GhostOS itself is open-source; may pay for tooling and some proprietary drivers.  
-- **Deliverables:** Regular milestones produce binaries, docs, and code repos (GitHub).
+- **Issue Tracking:** Use GitHub Issues for all tasks. Suggested labels: `bug`, `enhancement`, `proposal`, `help wanted`, `priority:high`, `good first issue`, `documentation`.  
+- **Milestones:** Reflect roadmap phases (e.g. “v1.0 Release”, “Compatibility Layer”, “AI Assistant”).  
+- **Task List (Sample first issues):**  
+  1. **Scaffold Repo Structure** – Create directories (`/boot`, `/kernel`, `/desktop`, `/store`, `/docs`, etc.) and placeholder files. *Label: enhancement*  
+  2. **Write README & CONTRIBUTING** – Draft comprehensive README (vision, install, usage) and guidelines. *Label: documentation*  
+  3. **Build GhostOS ISO** – Set up a basic Linux chroot or distribution build to produce a bootable ISO with custom GRUB. *Label: feature*  
+  4. **Implement Ghost CLI** – Prototype `ghost` command (help text, install/uninstall subcommands). *Label: feature*  
+  5. **Integrate Wine** – Container or script to install Wine/Proton in GhostOS for running `.exe`. *Label: feature*  
+  6. **Integrate Waydroid** – Set up Waydroid container for APK execution. *Label: feature*  
+  7. **Desktop Environment Prototype** – Create a simple GTK/Flutter “Hello World” desktop with dock and panel. *Label: enhancement*  
+  8. **Permission Manager UI** – UI design for app permissions (wireframe). *Label: design*  
+  9. **CI: Build Workflow** – GitHub Action to auto-build ISO and upload artifact. *Label: devops*  
+  10. **Testing: Live USB** – Document steps to create a Live USB (e.g. using Ventoy or `dd`) and boot GhostOS. *Label: documentation*  
 
-## Deliverables (MVP)
+*(Prioritise tasks that establish core functionality. Mark easy tasks as `good first issue`.)*
 
-- **Source Code Repositories:** `ghostos/kernel`, `ghostos/desktop`, `ghostos/ghostpkg`, etc, hosted publicly (e.g. GitHub/GitLab).  
-- **Build Artifacts:**  
-  - Live ISO images for x86_64 (GhostOS 1.0) – downloadable and reproducible by CI.  
-  - Bootable USB instructions and scripts (or Ventoy config).  
-  - Docker images for Ghost Store and Ghost AI backend.  
-- **Documentation:**  
-  - Architecture spec (this document).  
-  - Developer guide (how to build/debug OS modules).  
-  - API docs for GhostSDK (UI framework).  
-  - User guide (install, basic use, troubleshooting).  
-- **Ghost Package Repository:** Curated list of apps, example ghostpkg packages, and a scriptable repo.  
-- **Test Suite:** Automated tests (openQA scenarios, CI pipelines) with reports.  
-- **Release Notes:** Listing features, known issues, and acceptance criteria.
+## README.md & CONTRIBUTING.md (Outline)
 
-## Acceptance Criteria
+**README.md** should include:  
+- **Project Title & Tagline** (e.g. *“GhostOS: One OS, Every App”*).  
+- **Vision Statement** – Summarise the unified app/platform goal.  
+- **Features** – Highlight MVP features (Windows/Android/Linux app support, AI, live USB).  
+- **Getting Started** – Clone instructions, prerequisites (Linux host to build), basic build script (`make iso`).  
+  ```bash
+  git clone https://github.com/laravelgpt/ghostos.git
+  cd ghostos
+  make iso    # builds ghostos.iso
+  ```
+- **Installation** – How to burn ISO or use Ventoy.  
+- **Usage Examples** – `ghost install vscode`, `ghost ai ...`.  
+- **Directory Structure** – Briefly describe repo folders.  
+- **Development** – How to run tests, formatting rules.  
+- **Contributing** – Link to CONTRIBUTING.md.  
+- **License** – MIT or GPL etc.  
+- **Contact** – Maintainer/team contacts, chat rooms.
 
-GhostOS-1.0 (MVP) is acceptable when it meets:
+**CONTRIBUTING.md** should cover:  
+- **Workflow** – Fork/Pull Requests, branch naming.  
+- **Coding Standards** – Rust style, commit message guidelines.  
+- **Issue Guidelines** – Template for bug reports/feature requests.  
+- **Commit Hooks/CI** – Require passing tests before merge.  
+- **Code of Conduct** – Link to a code of conduct for contributors.
 
-- Boots on modern hardware and VM (UEFI/BIOS) from USB with live mode.  
-- Installs to disk and reboots into functional desktop.  
-- Runs a native Linux app (e.g. terminal, browser) and an example Windows .exe (via Wine) and Android .apk (via Waydroid).  
-- Ghost Store can install at least 5 apps from different platforms (EXE, APK, DEB).  
-- All major OS functions work: networking, sound, power management, basic video.  
-- AI assistant responds to at least two tasks offline (e.g. explain code, open app).  
-- Security measures in place: applications are sandboxed, updates are signed/atomic, SSH and sudo work.  
-- Automated installation test (openQA) passes (no critical boot/install failures).  
-- Documentation is complete for all delivered components.
+## Repository Structure (Suggested)
 
-Meeting these criteria ensures a reliable MVP that stakeholders can use or extend.
+```
+ghostos/
+├── boot/                # Bootloader configs (GRUB scripts, firmware stubs)
+│   └── grub.cfg
+├── kernel/              # Kernel build or patches (if any)
+│   └── (upstream or custom)
+├── rootfs/              # Root filesystem (SquashFS image sources)
+│   ├── etc/
+│   ├── usr/
+│   └── (other Linux filesystem hierarchy)
+├── desktop/             # Desktop shell/UI source (Flutter or C++)
+│   └── src/
+├── store/               # Ghost Store frontend/backend
+│   └── (list of app recipes/manifest)
+├── packages/           # Custom package build scripts
+│   └── (e.g. ghostpkg builder)
+├── sdk/                # Ghost SDK & sample apps
+│   └── samples/
+├── docs/               # Design docs and specifications (MVP spec, Ghostpkg format)
+│   ├── ghostos-spec.md
+│   ├── ghostpkg-spec.md
+│   └── ...
+├── .github/            # GitHub Actions workflows, issue templates
+│   ├── workflows/
+│   │   ├── build.yml
+│   │   └── test.yml
+│   └── ISSUE_TEMPLATE/
+├── Makefile            # Commands: make iso, make install, etc.
+├── README.md
+└── CONTRIBUTING.md
+```
+
+Add sample files as needed. If any code already exists (unspecified), migrate it into the appropriate folder (e.g. kernel patches into `/kernel`, UI code into `/desktop`).
+
+## GitHub Actions (Sample Workflows)
+
+- **Build ISO (`.github/workflows/build.yml`):**
+
+    ```yaml
+    name: Build GhostOS ISO
+    on:
+      push:
+        branches: [ main ]
+      pull_request:
+        branches: [ main ]
+    jobs:
+      build-iso:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v3
+          - name: Install Dependencies
+            run: |
+              sudo apt-get update
+              sudo apt-get install -y qemu-utils xorriso grub-pc-bin
+          - name: Build ISO
+            run: make iso
+          - name: Archive ISO
+            uses: actions/upload-artifact@v3
+            with:
+              name: ghostos.iso
+              path: output/ghostos.iso
+    ```
+
+- **Test (`.github/workflows/test.yml`):**
+
+    ```yaml
+    name: CI Test
+    on: [push, pull_request]
+    jobs:
+      lint:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v3
+          - name: Rust Lint
+            run: cargo clippy --all -- -D warnings
+          - name: Rust Test
+            run: cargo test --all
+      integration:
+        runs-on: ubuntu-latest
+        needs: [lint]
+        steps:
+          - uses: actions/checkout@v3
+          - name: Boot ISO in QEMU (smoke test)
+            run: |
+              qemu-system-x86_64 -m 2048 -no-reboot -serial none -parallel none \
+                -drive file=output/ghostos.iso,format=raw,if=virtio \
+                -monitor none -display none &
+              sleep 30
+              # (Add commands to check QEMU status or logs)
+              kill $!
+    ```
+
+(*These are illustrative; adjust for actual build tools and test frameworks.*)
+
+## Migration Notes
+
+- **Existing Code:** The current state of the repo is unspecified. If there is starter code or assets, review it and place into this structure. For example, move boot scripts into `boot/`, any UI code into `desktop/`, etc. Delete placeholders if replaced.  
+- **Big Breakpoints:** Be prepared to overhaul the repo layout. List any files on `main` that need merging.  
+
+## Usage Commands (Examples)
+
+- Clone the repo and build ISO:
+  ```bash
+  git clone https://github.com/laravelgpt/ghostos.git
+  cd ghostos
+  make iso
+  ```
+- **Creating a bootable USB:**  
+  1. **With Ventoy:** Install Ventoy on the USB, then copy `ghostos.iso` onto it.  
+  2. **With `dd` (legacy):**  
+     ```bash
+     sudo dd if=output/ghostos.iso of=/dev/sdX bs=4M status=progress && sync
+     ```  
+     (Replace `/dev/sdX` with USB device. This method works but will erase the USB.)  
+- **Boot parameters:** During live boot, you can append boot options for persistence or debug:
+  - `live persistence` (GhostOS can detect and use an attached persistent overlay file).  
+  - `acpi=off` or `nomodeset` for hardware compatibility if needed.
 
 ---
 
-**Sources:** GhostOS design leverages industry precedents: Wine for Windows compatibility; Waydroid for Android apps; Darling for macOS support; Secure Boot via shim/GRUB; transactional snapshots for updates; and Flutter for UI. All critical functionality is grounded in existing OSS platforms, ensuring GhostOS is grounded in proven technology.
+This specification serves as a **blueprint for GhostOS 1.0 MVP**. It outlines concrete tasks and structure for implementation. Contributors should create issues and PRs based on the above roadmap and task list. The goal is to have a **working prototype (GhostOS 1.0)** by late 2026, demonstrating universal app support, AI assistant, and smooth user experience on low-end hardware.
+
+**Sources:** GhostOS plans leverage existing technologies: Linux kernel, Wine/Proton, Waydroid, Ventoy, SquashFS/OverlayFS, Linux container/security primitives. These inform our architecture and feasibility.
